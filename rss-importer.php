@@ -41,6 +41,8 @@ if ( !class_exists( 'WP_Importer' ) ) {
 if ( class_exists( 'WP_Importer' ) ) {
 class RSS_Import extends WP_Importer {
 
+	public function __construct() {}
+
 	var $posts = array ();
 	var $file;
 
@@ -83,6 +85,24 @@ class RSS_Import extends WP_Importer {
 			}
 
 			$post_title = $item->title;
+			$path = explode("/", $item->link);
+			$post_parent = 0;
+			if (count($path) > 2) {
+				$parent_name = $path[count($path) - 2];
+				$post_parent = post_exists($parent_name);
+				if (!$post_parent) {
+					$parent_page = array(
+						"post_title" => $parent_name
+						);
+					$post_parent = wp_insert_post($parent_page);
+					if ( is_wp_error( $post_parent ) )
+						return $post_parent;
+					if (!$post_parent) {
+						_e('Couldn&#8217;t get post ID', 'rss-importer');
+						return;
+					}
+				}
+			}
 			$post_date_gmt = $item->pubDate;
 			if ($post_date_gmt) {
 				$post_date_gmt = strtotime($post_date_gmt);
@@ -93,7 +113,10 @@ class RSS_Import extends WP_Importer {
 				$post_date_gmt = str_replace('T', ' ', $post_date_gmt);
 				$post_date_gmt = strtotime($post_date_gmt);
 			}
-			$post_date_gmt = gmdate('Y-m-d H:i:s', $post_date_gmt);
+			if ($post_date_gmt)
+				$post_date_gmt = gmdate('Y-m-d H:i:s', $post_date_gmt);
+			else
+				$post_date_gmt = gmdate('Y-m-d H:i:s');
 			$post_date = get_date_from_gmt( $post_date_gmt );
 
 			$categories = array();
@@ -108,24 +131,24 @@ class RSS_Import extends WP_Importer {
 			}
 
 			foreach ($categories as $cat_index => $category) {
-				$categories[$cat_index] = $wpdb->escape( html_entity_decode( $category ) );
+				$categories[$cat_index] = html_entity_decode( $category );
 			}
 
 			$guid = '';
 			if ($item->guid) {
-				$guid = $wpdb->escape(trim($item->guid));
+				$guid = trim($item->guid);
 			}
 
 			$post_content = false;
 			if (!empty($namespaces['content'])) {
 				$content = $item->children($namespaces['content']);
 				if ($content->encoded) {
-					$post_content = $wpdb->escape(trim($content->encoded));
+					$post_content = trim($content->encoded);
 				}
 			}
 			if (!$post_content) {
 				// This is for feeds that put content in description
-				$post_content = $wpdb->escape(html_entity_decode(trim($item->description)));
+				$post_content = html_entity_decode(trim($item->description));
 			}
 
 			// Clean up content
@@ -135,7 +158,8 @@ class RSS_Import extends WP_Importer {
 
 			$post_author = 1;
 			$post_status = 'publish';
-			$this->posts[] = compact('post_author', 'post_date', 'post_date_gmt', 'post_content', 'post_title', 'post_status', 'guid', 'categories');
+			$post_type = 'page';
+			$this->posts[] = compact('post_type', 'post_author', 'post_date', 'post_date_gmt', 'post_content', 'post_title', 'post_status', 'guid', 'categories', 'post_parent');
 		}
 	}
 
@@ -143,25 +167,28 @@ class RSS_Import extends WP_Importer {
 		echo '<ol>';
 
 		foreach ($this->posts as $post) {
-			echo "<li>".__('Importing post...', 'rss-importer');
+			echo "<li>";//.__('Importing post...', 'rss-importer');
 
 			extract($post);
 
-			if ($post_id = post_exists($post_title, $post_content, $post_date)) {
-				_e('Post already imported', 'rss-importer');
-			} else {
+			if ($post_id = post_exists($post_title) ) {
+				echo "Updating: ".__($post_title, 'rss-importer');
+				$post['ID'] = $post_id;
 				$post_id = wp_insert_post($post);
-				if ( is_wp_error( $post_id ) )
-					return $post_id;
-				if (!$post_id) {
-					_e('Couldn&#8217;t get post ID', 'rss-importer');
-					return;
-				}
-
-				if (0 != count($categories))
-					wp_create_categories($categories, $post_id);
-				_e('Done!', 'rss-importer');
+			} else {
+				echo "Creating: ".__($post_title, 'rss-importer');
+				$post_id = wp_insert_post($post);
 			}
+			if ( is_wp_error( $post_id ) )
+				return $post_id;
+			if (!$post_id) {
+				_e('Couldn&#8217;t get post ID', 'rss-importer');
+				return;
+			}
+
+			if (0 != count($categories))
+				wp_create_categories($categories, $post_id);
+			_e(' ... Done!', 'rss-importer');
 			echo '</li>';
 		}
 
